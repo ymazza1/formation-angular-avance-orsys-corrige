@@ -1,77 +1,45 @@
 # TP 5 — Résolution pas à pas
 
-Fichiers concernés :
-`libs/panier/domaine/src/lib/panier.ts`
-`libs/panier/data-access/src/lib/panier.store.ts`
-`libs/panier/ui/src/lib/ligne-panier.component.ts`
+On travaille sur `apprenant/tp-05`, un terminal sur `npx nx run-many -t test --watch`.
+Le compteur de départ est à 20 rouges, dont 15 à écrire. Les 5 autres passent
+seuls : deux tests de persistance (code fourni, il leur faut un panier non vide)
+et trois du code promo (bonus, il leur faut la remise et le total).
 
----
+## Étape 1 — Le domaine du panier (8 tests)
 
-## Étape A — `ajouter` : trois règles dans huit lignes
+**Fichier** `libs/panier/domaine/src/lib/panier.ts`
+
+**Pourquoi celui-là** — Les règles du panier (bornes, fusion, retrait à zéro,
+traduction vers la livraison) ne dépendent ni d'Angular ni du réseau. Elles
+vivent dans des fonctions pures, testées sans `TestBed`. Le store, à l'étape 2,
+n'aura plus qu'à les appeler. `ajouter`, fournie, montre la forme : lire,
+`remplacer`, `borner`.
+
+**Le test qui attend** `panier.spec.ts` › « borne au stock connu de la ligne »
 
 ```ts
-export function ajouter(panier: Panier, produit: Produit, quantite = 1): Panier {
-  if (produit.stock <= 0) return panier;                                   // 1
-
-  const existante = panier.find((ligne) => ligne.produitId === produit.id);
-  if (!existante) return [...panier, ligneDepuisProduit(produit, quantite)]; // 2
-
-  return remplacer(panier, produit.id, {                                    // 3
-    ...existante,
-    quantite: borner(existante.quantite + quantite, produit.stock),
-  });
+export function retirer(panier: Panier, produitId: string): Panier {
+  return panier.filter((ligne) => ligne.produitId !== produitId);
 }
-```
 
-1. **Rupture** — un produit à stock nul n'entre pas. On renvoie le panier
-   *reçu*, pas une copie : rien n'a changé, autant préserver la référence.
-2. **Nouvelle ligne** — `[...panier, ...]` produit un nouveau tableau. Jamais
-   `panier.push(...)`.
-3. **Fusion** — un produit déjà présent additionne les quantités. C'est le
-   comportement attendu par l'utilisateur qui clique deux fois ; dupliquer la
-   ligne serait perçu comme un bug.
-
-`borner` (fourni) fait le double plafonnement : stock disponible **et**
-`QUANTITE_MAX_PAR_LIGNE`. Deux tests distincts le vérifient, parce que ce sont
-deux règles différentes qui se trouvent partager une implémentation.
-
-**Test à ne pas rater** : « ne modifie pas le panier reçu ». Il est là pour
-attraper le `push` réflexe.
-
----
-
-## Étape B — `changerQuantite` : le zéro qui supprime
-
-```ts
+/** Une quantité nulle ou négative retire la ligne : c'est le geste attendu. */
 export function changerQuantite(panier: Panier, produitId: string, quantite: number): Panier {
-  if (quantite <= 0) return retirer(panier, produitId);          // 1
+  if (quantite <= 0) return retirer(panier, produitId);
 
   const existante = panier.find((ligne) => ligne.produitId === produitId);
-  if (!existante) return panier;                                 // 2
+  if (!existante) return panier;
 
+  // Le stock de référence est celui mémorisé dans la ligne : le domaine panier
+  // n'a pas à interroger le catalogue.
   return remplacer(panier, produitId, {
     ...existante,
-    quantite: borner(quantite, existante.stockDisponible),       // 3
+    quantite: borner(quantite, existante.stockDisponible),
   });
 }
-```
 
-1. **Zéro retire la ligne.** Ce n'est pas un raccourci technique : c'est le
-   geste de l'utilisateur qui efface le champ quantité. Le tester explicitement
-   évite un débat en revue de code six mois plus tard. Les valeurs négatives
-   sont traitées pareil — elles ne devraient pas arriver, mais un `<input
-   type="number">` en produit très bien.
-2. **Produit absent** : on ne crée rien, on renvoie le panier tel quel.
-3. **Le plafond vient de la ligne**, pas du produit : `existante.stockDisponible`.
-   La ligne a mémorisé le stock au moment de l'ajout, et on n'a pas le produit
-   sous la main ici.
-
----
-
-## Étape C — `versLignesLivrables` : une frontière entre deux domaines
-
-```ts
+/** Traduction vers le vocabulaire du domaine livraison. */
 export function versLignesLivrables(panier: Panier): readonly LigneLivrable[] {
+  // Ni nom ni identifiant : la livraison n'a pas à connaître le produit.
   return panier.map((ligne) => ({
     poidsKg: ligne.poidsKg,
     volumeM3: ligne.volumeM3,
@@ -81,276 +49,193 @@ export function versLignesLivrables(panier: Panier): readonly LigneLivrable[] {
 }
 ```
 
-La tentation est d'écrire `return panier;` — les `LignePanier` ont déjà tous les
-champs nécessaires, TypeScript ne dirait rien.
+**Ce qui passe au vert** — 8 tests de plus, 12 restants (tous dans le store).
 
-Le test l'interdit :
+**Le piège** — `{ ...ligne }` dans `versLignesLivrables` : plus court, et le test
+« ne laisse fuir ni le nom ni l identifiant du produit » échoue sur les clés.
+Second piège : `if (quantite === 0)` au lieu de `<= 0`, et une saisie négative
+crée une ligne à quantité 1 (via `borner`) au lieu de la retirer.
 
-```ts
-expect(Object.keys(lignes[0]).sort()).toEqual(['montant', 'poidsKg', 'quantite', 'volumeM3']);
-```
+## Étape 2 — Les commandes du store (4 tests)
 
-**Pourquoi ?** La livraison n'a pas besoin du nom ni de l'identifiant du
-produit. Les lui donner crée une dépendance qui n'a pas lieu d'être, et le jour
-où quelqu'un écrira une règle de livraison basée sur le nom du produit, personne
-ne l'arrêtera.
+**Fichier** `libs/panier/data-access/src/lib/panier.store.ts`
 
-C'est la même discipline que le mapping DTO du TP 2, appliquée cette fois entre
-deux domaines internes.
+**Pourquoi celui-là** — Le store est le seul porteur de l'état du panier dans
+l'application : un signal privé en écriture. Ses commandes ne font que passer
+la valeur courante au domaine et poser le résultat. Aucune règle ici : un `if`
+dans une commande est une règle qui s'est trompée de fichier.
 
----
-
-## Étape D — La chaîne de dérivation (le cœur du TP)
+**Le test qui attend** `panier.store.spec.ts` › « produit une nouvelle référence à chaque modification »
 
 ```ts
-private readonly _lignes = signal<Panier>(PANIER_VIDE);
-
-readonly nbArticles   = computed(() => nbArticles(this._lignes()));
-readonly estVide      = computed(() => this._lignes().length === 0);
-readonly sousTotal    = computed(() => sousTotal(this._lignes()));
-
-readonly fraisLivraison = computed(() =>
-  this.estVide() ? 0 : coutLivraison(versLignesLivrables(this._lignes()), this.strategies),
-);
-
-readonly remise = computed(() => remise(this.sousTotal(), this._remisePourcent()));
-
-readonly total = computed(() =>
-  arrondirCentimes(this.sousTotal() - this.remise() + this.fraisLivraison()),
-);
-```
-
-Un seul signal en écriture. Six `computed`. **Aucun montant stocké.**
-
-```
-_lignes ──┬─→ nbArticles
-          ├─→ estVide
-          ├─→ sousTotal ──┬─→ remise ──┐
-          │               │            ├─→ total
-          └─→ fraisLivraison ──────────┘
-```
-
-Deux points d'attention :
-
-**Le cas du panier vide.** Sans `estVide() ? 0 : …`, `coutLivraison` reçoit une
-liste vide : le montant total vaut 0, le franco ne s'applique pas, aucune
-stratégie n'est sollicitée, et le résultat est 0 **par accident**. Sur un autre
-jeu de règles de livraison, ça ne le serait pas.
-
-**Un `computed` qui lit un `computed`.** `total` lit `sousTotal`, `remise` et
-`fraisLivraison`, qui lisent eux-mêmes `_lignes`. Angular résout le graphe en
-profondeur avant toute lecture : on ne peut jamais observer un `total` calculé
-avec un `sousTotal` périmé.
-
-### La question à poser au groupe
-
-*Et si `total` était un signal mis à jour par un `effect` ?*
-
-Réponses attendues : il faudrait penser à le recalculer dans chaque chemin de
-modification ; deux effets pourraient s'écrire l'un dans l'autre ; et le jour où
-quelqu'un ajoute une méthode qui modifie `_lignes` sans passer par les
-existantes, le total diverge silencieusement de son détail.
-
-Avec un `computed`, ce chemin n'existe pas.
-
----
-
-## Étape E — Les commandes, une ligne chacune
-
-```ts
-ajouter(produit: Produit, quantite = 1): void {
-  this._lignes.update((panier) => ajouter(panier, produit, quantite));
-}
-
-retirer(produitId: string): void {
-  this._lignes.update((panier) => retirer(panier, produitId));
-}
-
-changerQuantite(produitId: string, quantite: number): void {
-  this._lignes.update((panier) => changerQuantite(panier, produitId, quantite));
-}
-
-vider(): void {
-  this._lignes.set(PANIER_VIDE);
-  this.retirerCodePromo();
-}
-```
-
-**Le store ne contient aucune règle métier.** Il porte un signal et délègue au
-domaine.
-
-Si vous vous surprenez à écrire un `if` ici, la règle est au mauvais endroit :
-elle appartient au domaine, où elle sera testable sans Angular.
-
-`vider()` retire aussi le code promo — une remise qui survit à un panier vidé
-est un bug de caisse.
-
----
-
-## Étape F — La persistance, et le seul effet du store
-
-```ts
-constructor() {
-  this.restaurer();
-
-  effect(() => {
-    const contenu = JSON.stringify(this._lignes());
-    try {
-      localStorage.setItem(CLE_PERSISTANCE, contenu);
-    } catch {
-      // stockage plein ou navigation privée : le panier reste en mémoire
-    }
-  });
-}
-
-private restaurer(): void {
-  try {
-    const brut = localStorage.getItem(CLE_PERSISTANCE);
-    if (brut) this._lignes.set(JSON.parse(brut) as Panier);
-  } catch {
-    // contenu illisible : on repart d'un panier vide plutôt que de planter
+  ajouter(produit: Produit, quantite = 1): void {
+    this._lignes.update((panier) => ajouter(panier, produit, quantite));
   }
-}
+
+  retirer(produitId: string): void {
+    this._lignes.update((panier) => retirer(panier, produitId));
+  }
+
+  changerQuantite(produitId: string, quantite: number): void {
+    this._lignes.update((panier) => changerQuantite(panier, produitId, quantite));
+  }
+
+  vider(): void {
+    this._lignes.set(PANIER_VIDE);
+    // Un code promo n'a pas de sens sur un panier vide.
+    this.retirerCodePromo();
+  }
 ```
 
-**Pourquoi cet `effect` est légitime** : il lit du réactif et écrit dans du non
-réactif. Il ne calcule rien, il n'écrit dans aucun signal. C'est exactement la
-forme du deuxième effet vu au TP 4 (la surveillance de stock).
+**Ce qui passe au vert** — 4 tests écrits, plus 2 de persistance et 1 du code
+promo qui passent seuls : 7 de moins, 5 restants.
 
-**Les deux `try/catch` ne sont pas de la paranoïa.** `localStorage.setItem` lève
-en navigation privée Safari et quand le quota est atteint. `JSON.parse` lève dès
-qu'un autre onglet, une ancienne version de l'application ou une extension a
-écrit n'importe quoi sous cette clé. Dans les deux cas, le panier doit continuer
-de fonctionner.
+**Le piège** — `this._lignes().push(...)` : la version 2 du compteur du TP 4,
+sur un tableau. TypeScript refuse (`Panier` est `readonly`), et c'est voulu.
+Second piège : les méthodes du store portent le même nom que les fonctions du
+domaine. Dans `ajouter()`, `ajouter(panier, …)` désigne bien la fonction
+importée (les méthodes s'appellent par `this.`), mais le relire à voix haute
+évite la confusion en séance.
 
-**En test** : l'effet est *planifié*, pas synchrone. D'où le `TestBed.tick()` :
+## Étape 3 — La chaîne de dérivation (3 tests)
+
+**Fichier** `libs/panier/data-access/src/lib/panier.store.ts`
+
+**Pourquoi celui-là** — Un montant stocké finit toujours par diverger de son
+détail. Les montants sont donc des `computed` du store, chacun appelant le
+domaine. Le store connaît les stratégies de livraison (`STRATEGIES_LIVRAISON`,
+injectées) : c'est le seul endroit qui réunisse le panier et la livraison.
+
+**Le test qui attend** `panier.store.spec.ts` › « recalcule le total quand une quantité change »
 
 ```ts
-store.ajouter(ETAGERE, 2);
-TestBed.tick();                    // laisse passer l'effet
-expect(JSON.parse(localStorage.getItem(CLE_PERSISTANCE) ?? '[]')).toHaveLength(1);
+  readonly sousTotal = computed(() => sousTotal(this._lignes()));
+
+  readonly fraisLivraison = computed(() =>
+    this.estVide() ? 0 : coutLivraison(versLignesLivrables(this._lignes()), this.strategies),
+  );
+
+  readonly remise = computed(() => remise(this.sousTotal(), this._remisePourcent()));
+
+  // Construit sur les autres computed : une seule règle par montant.
+  readonly total = computed(() =>
+    arrondirCentimes(this.sousTotal() - this.remise() + this.fraisLivraison()),
+  );
 ```
 
-C'est précisément parce qu'un `effect` est planifié qu'on ne s'en sert jamais
-pour calculer.
+**Ce qui passe au vert** — 3 tests écrits, plus 2 du code promo qui passent
+seuls : 0 restant.
 
----
+**Le piège** — `total` recalculé depuis `_lignes` (`sousTotal(this._lignes()) + …`) :
+les tests passent, mais la règle existe deux fois. Le montrer en ajoutant une
+remise : le total d'une version et le sous-total de l'autre divergent dès qu'on
+modifie l'une sans l'autre. Le garde `this.estVide() ? 0 : …` n'est **pas** exigé
+par les tests : `coutLivraison([])` vaut déjà 0 (vérifié par mutation). Il rend
+la règle lisible, il n'est pas une correction. Ne pas le présenter comme un
+piège.
 
-## Étape G — `model()` et la ligne modifiable
+## Bonus — Le code promo
+
+**Fichier** `libs/panier/data-access/src/lib/panier.store.ts` (fourni) et `panier.store.bonus.spec.ts`
+
+**Pourquoi celui-là** — Trois issues réseau, trois états distincts dans le store :
+le composant lit `erreurPromo()` sans `try`. C'est la discipline du TP 2 (une
+promesse qui ne rejette jamais), appliquée à un cas où l'utilisateur agit.
+
+**Le test qui attend** `panier.store.bonus.spec.ts` › « signale une panne de vérification »
 
 ```ts
-readonly ligne = input.required<LignePanier>();
-readonly quantite = model.required<number>();
-readonly supprimer = output<string>();
-
-protected readonly totalLigne = computed(() => this.ligne().prixUnitaire * this.quantite());
-protected readonly stockAtteint = computed(() => this.quantite() >= this.ligne().stockDisponible);
-
-protected surSaisie(valeur: string): void {
-  const quantite = Number(valeur);
-  this.quantite.set(Number.isFinite(quantite) ? quantite : 0);
-}
+  async appliquerCodePromo(code: string): Promise<void> {
+    this._erreurPromo.set(null);
+    try {
+      const reponse = await firstValueFrom(
+        this.http.get<ReponsePromotion>(`${this.base}/promotions/${code}`),
+      );
+      if (!reponse.valide) {
+        this._erreurPromo.set('code_invalide');
+        return;
+      }
+      this._codePromo.set(code);
+      this._remisePourcent.set(reponse.remisePourcent ?? null);
+    } catch {
+      // Une panne n'est pas un code invalide : l'utilisateur réessaierait le
+      // même code indéfiniment.
+      this._erreurPromo.set('verification_impossible');
+    }
+  }
 ```
 
-**Trois API, trois usages** — et c'est la distinction à faire passer :
+**Ce qui passe au vert** — Rien à écrire : 2 tests verts dès l'ouverture, 1
+après l'étape 2 (`vider`), 2 après l'étape 3 (`remise`, `total`).
 
-| API | Quand | Ici |
-| --- | --- | --- |
-| `input()` | le parent donne, l'enfant lit | `ligne` — l'enfant ne la modifie pas |
-| `output()` | l'enfant signale, le parent réagit | `supprimer` — le parent décide quoi faire |
-| `model()` | la valeur fait l'aller-retour | `quantite` — l'enfant l'affiche et la modifie |
+**Le piège** — Ajouter le champ de saisie dans la page et oublier qu'un
+changement de panier ne revalide pas le code : la remise est un pourcentage,
+elle suit le sous-total, c'est voulu.
 
-Le parent écrit `[(quantite)]="…"`, l'enfant appelle `this.quantite.set(...)`.
+## Bonus — La persistance, et le seul effect du store
 
-**Le piège** : `Number('')` vaut `0`, mais `Number('abc')` vaut `NaN`. D'où le
-`Number.isFinite`. Un `NaN` qui remonte dans le store donne un sous-total `NaN`,
-et tous les montants de la page deviennent « NaN € ». Un test le verrouille.
+**Fichier** `libs/panier/data-access/src/lib/panier.store.ts` (fourni)
 
-**Avertissement à donner** : `model()` est tentant partout, et il crée un
-couplage bidirectionnel qui rend le flux de données difficile à suivre. Deux ou
-trois par application, pas plus. C'est le seul de toute la formation.
+**Pourquoi celui-là** — C'est le cas légitime de l'`effect` : synchroniser un
+système extérieur (`localStorage`) avec un état réactif, sans calculer ni écrire
+dans un signal. La restauration se fait une fois, dans le constructeur.
 
----
-
-## Étape H — Le branchement, et la frontière qu'il ouvre
+**Le test qui attend** `panier.store.spec.ts` › « repart d un panier vide si le contenu stocké est illisible »
 
 ```ts
-protected readonly panier = inject(PanierStore);
+  constructor() {
+    this.restaurer();
 
-protected ajouterAuPanier(produit: Produit): void {
-  this.panier.ajouter(produit);
-}
+    // Le seul effet du store : il synchronise le stockage du navigateur, il ne
+    // calcule rien et n'écrit dans aucun signal.
+    effect(() => {
+      const contenu = JSON.stringify(this._lignes());
+      try {
+        localStorage.setItem(CLE_PERSISTANCE, contenu);
+      } catch {
+        // stockage plein ou navigation privée : le panier reste en mémoire
+      }
+    });
+  }
+
+  private restaurer(): void {
+    try {
+      const brut = localStorage.getItem(CLE_PERSISTANCE);
+      if (brut) this._lignes.set(JSON.parse(brut) as Panier);
+    } catch {
+      // contenu illisible : on repart d'un panier vide plutôt que de planter
+    }
+  }
 ```
 
-### `[quantite]` + `(quantiteChange)` plutôt que `[(quantite)]`
+**Ce qui passe au vert** — Rien à écrire. Retirer le `try` de `restaurer()` fait
+rougir « repart d un panier vide si le contenu stocké est illisible » (vérifié
+par mutation).
 
-```html
-<mc-ligne-panier
-  [ligne]="ligne"
-  [quantite]="ligne.quantite"
-  (quantiteChange)="panier.changerQuantite(ligne.produitId, $event)"
-  (supprimer)="panier.retirer($event)"
-/>
-```
+**Le piège** — `TestBed.tick()` dans « écrit le panier dans le stockage local » :
+un `effect` ne s'exécute pas de façon synchrone. Sans le `tick`, le test lirait
+un stockage vide. C'est la raison pour laquelle un `effect` ne doit pas porter
+d'état que d'autres lisent dans la foulée.
 
-La forme courte `[(quantite)]="ligne.quantite"` ne compile pas : `ligne.quantite`
-est un nombre lu dans un tableau, pas un signal en écriture. Le parent ne
-*possède* pas cette valeur — il la relaie au store, qui est la seule source de
-vérité.
+## Pour le formateur — katas si le groupe finit en avance
 
-C'est une bonne occasion de montrer ce que `model()` est réellement : **deux
-liaisons, pas une**. Le sucre `[(x)]` n'existe que quand les deux côtés
-correspondent.
+Sans test, à animer à l'oral :
 
-### La frontière qu'on vient d'ouvrir
-
-`catalogue/feature` importe désormais `panier/data-access` et `panier/ui`. La
-règle de lint a dû être étendue :
-
-```js
-{ sourceTag: 'domaine:catalogue',
-  onlyDependOnLibsWithTags: ['domaine:catalogue', 'domaine:panier', 'domaine:livraison', 'domaine:partage'] },
-```
-
-**C'est une décision d'architecture, pas un contournement**, et elle mérite
-trois minutes en salle.
-
-Pour : « ajouter au panier » depuis une fiche produit est une interaction métier
-normale ; l'interdire obligerait à faire remonter un événement jusqu'à un
-composant parent qui, lui, aurait le droit — pour le même résultat, en plus
-compliqué.
-
-Contre : chaque autorisation de ce type rapproche le workspace du « tout le
-monde importe tout le monde ». Le garde-fou est la **direction** : la règle
-`domaine:panier` ne mentionne pas de retour vers le catalogue. Le catalogue
-déclenche, le panier ne va jamais afficher de catalogue.
-
-La question à poser : *dans six mois, quelle sera la prochaine flèche demandée,
-et sur quel critère l'acceptera-t-on ?* S'il n'y a pas de réponse, la matrice
-finira permissive.
-
----
+1. Le `JSON.stringify` de l'effet s'exécute à chaque modification, même si le
+   contenu est identique. Comment le savoir ? Faut-il s'en préoccuper ?
+2. Ajouter le champ de code promo dans le récapitulatif de la page, avec les
+   trois messages.
 
 ## Si un test résiste
 
-| Symptôme | Cause la plus probable |
+| Symptôme | Cause |
 | --- | --- |
-| « ne modifie pas le panier reçu » échoue | un `push` ou un `.sort()` quelque part |
-| Les frais de livraison valent 0 sur un panier non vide | le franco s'applique — c'est peut-être correct, vérifiez le montant |
-| Les frais échouent sur panier vide | le cas limite `estVide()` manque |
-| `localStorage is not defined` | test lancé en environnement `node` au lieu de `jsdom` |
-| Rien dans `localStorage` après un ajout | `TestBed.tick()` manquant : l'effet est planifié |
-| Le total ne bouge pas dans le navigateur | une mutation : `this._lignes().push(...)` au lieu de `update` |
-| « NaN € » partout | `surSaisie` sans `Number.isFinite` |
-
----
-
-## Ce qu'on garde pour la suite
-
-- `stockDisponible` est figé au moment de l'ajout. Si le stock tombe à zéro
-  pendant que le produit est au panier, rien ne le détecte. **TP 8** : l'API
-  renvoie un 409 `stock_insuffisant` à la commande.
-- Le `PanierStore` injecte les stratégies de livraison, donc son test a besoin
-  d'un `TestBed`. **TP 9** : bonne discussion sur ce que coûte vraiment
-  l'injection en test, et sur ce qu'on aurait gagné à passer les stratégies en
-  argument.
+| « ne laisse fuir ni le nom ni l identifiant » échoue | `{ ...ligne }` ou `produitId` recopié dans `versLignesLivrables` |
+| « retire la ligne sur une quantité négative » échoue | `quantite === 0` au lieu de `<= 0` |
+| Erreur de type sur `push` dans le store | mutation du tableau : utiliser `update` et le domaine |
+| « produit une nouvelle référence » échoue | une commande renvoie le même tableau (mutation dans le domaine) |
+| « retire le code promo en vidant le panier » échoue | `vider()` n'appelle pas `retirerCodePromo()` |
+| « recalcule le total » échoue mais le sous-total est bon | `total` sans `fraisLivraison`, ou sans `arrondirCentimes` |
+| « applique le tarif volumineux » trouve 0 | `fraisLivraison` est resté à `0`, ou `this.strategies` non passé à `coutLivraison` |
+| Les tests de persistance restent rouges après l'étape 2 | `TestBed.tick()` retiré du test, ou commande qui ne passe pas par `_lignes` |
+| Tests verts, mais catalogue vide dans le navigateur avec un `NG0201` | `...fournirStrategiesLivraison()` retiré de `app.config.ts` (fourni) : les tests fournissent les stratégies eux-mêmes, l'application non (défaut 1) |
