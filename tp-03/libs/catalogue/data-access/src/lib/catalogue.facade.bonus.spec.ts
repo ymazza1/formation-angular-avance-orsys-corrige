@@ -59,4 +59,17 @@ describe('CatalogueFacade — bonus', () => {
     });
   });
 
+  describe('toSignal et le nettoyage', () => {
+    it('la requête en cours est annulée quand l injecteur est détruit', () => {
+      facade.rafraichir();
+      laisserPasserLaFrappe();
+      const enCours = http.expectOne(() => true);
+
+      // Détruire le module de test détruit l'injecteur racine : c'est lui que
+      // `toSignal` surveille pour se désabonner, sans une ligne de notre part.
+      TestBed.resetTestingModule();
+
+      expect(enCours.cancelled).toBe(true);
+    });
+  });
 });
