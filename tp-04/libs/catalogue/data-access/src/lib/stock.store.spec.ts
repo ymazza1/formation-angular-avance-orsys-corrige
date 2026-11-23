@@ -122,6 +122,19 @@ describe('StockStore', () => {
 
       http.expectNone(() => true);
     });
+
+    it('s arrête seul quand l injecteur est détruit', () => {
+      store.surveiller(['p-001']);
+      http.match(() => true);
+      const rafraichir = vi.spyOn(store, 'rafraichir');
+
+      // Personne n'appelle `arreter()` : c'est la destruction de l'injecteur
+      // racine (fermeture de l'application, fin d'un test) qui doit suffire.
+      TestBed.resetTestingModule();
+      vi.advanceTimersByTime(PERIODE_STOCK_MS * 3);
+
+      expect(rafraichir).not.toHaveBeenCalled();
+    });
   });
 
 });

@@ -1,268 +1,224 @@
 # TP 4 — Résolution pas à pas
 
-Fichiers concernés :
-`libs/catalogue/data-access/src/lib/stock.store.ts`
-`libs/catalogue/ui/src/lib/badge-stock.component.ts`
+On travaille sur `apprenant/tp-04`, un terminal sur `npx nx run-many -t test --watch`.
+Le compteur de départ est à 10 rouges, dont 9 à écrire : le dixième est le bonus
+« ignore une erreur réseau sans perdre la valeur connue », qui passe seul au vert
+après l'étape 1.
 
----
+## Étape 1 — Voir le bug, puis écrire l'état
 
-## Étape A — Le piège, démontré hors du TP
+**Fichier** `libs/catalogue/feature/src/lib/catalogue.page.ts` (le temps de la
+démonstration), puis `libs/catalogue/data-access/src/lib/stock.store.ts`
 
-L'énoncé fait écrire trois versions d'un compteur dans `CataloguePage`, sans
-toucher à `StockStore`. C'est volontaire : la démonstration doit tenir en dix
-lignes et fonctionner immédiatement, sans dépendre du code que les stagiaires
-n'ont pas encore écrit.
+**Pourquoi celui-là** — La démonstration vit dans la page parce qu'elle ne
+dépend d'aucun code du TP : on voit le bug avant d'avoir écrit une ligne de
+store, et on l'efface. L'état, lui, vit dans le store : c'est le seul endroit
+qui reçoive les réponses du réseau, donc le seul qui doive savoir qu'une mise à
+jour se fait par une nouvelle `Map`. Le badge et la page ne font que lire.
 
-### Version 1 — champ ordinaire
+Les trois versions du compteur sont dans l'énoncé, à taper telles quelles. Le
+geste à montrer : la version 2 (`this.compteurSignal().valeur += 1`) laisse
+l'écran à 0 alors que la valeur est dans un signal. La phrase à obtenir du
+groupe : *un signal surveille sa référence, pas ce qu'elle contient*.
 
-```ts
-protected compteurMutable = { valeur: 0 };
-setInterval(() => { this.compteurMutable.valeur += 1; }, 1000);
-```
-
-La console compte, l'écran reste à 0.
-
-**Sous Zone.js, ça marchait.** Zone.js interceptait le `setInterval`, et à la
-fin de la tâche asynchrone il déclenchait un cycle de détection **global**.
-Angular revérifiait tout et voyait la nouvelle valeur. Le rafraîchissement était
-accidentel : Angular ne savait pas *quoi* avait changé, il revérifiait par
-précaution.
-
-C'est aussi, accessoirement, la preuve que l'application est bien zoneless.
-
-### Version 2 — signal, mais muté
+**Le test qui attend** `stock.store.spec.ts` › « produit une nouvelle référence à chaque mise à jour »
 
 ```ts
-protected compteurSignal = signal({ valeur: 0 });
-setInterval(() => { this.compteurSignal().valeur += 1; }, 1000);
-```
-
-L'écran reste à 0 **aussi**. C'est l'erreur que presque tout le monde commet.
-
-Mettre la valeur dans un signal ne suffit pas : **le signal surveille sa
-référence, pas le contenu de ce qu'il contient.** `.valeur += 1` modifie
-l'objet ; la référence que le signal détient est la même qu'avant ; le signal
-n'a rien à notifier.
-
-Le signal n'est pas « profond ». Il ne l'a jamais été.
-
-### Version 3 — nouvelle référence
-
-```ts
-setInterval(() => {
-  this.compteurSignal.update((c) => ({ valeur: c.valeur + 1 }));
-}, 1000);
-```
-
-L'écran compte.
-
-### La transposition à StockStore
-
-La même erreur, appliquée à une `Map` :
-
-```ts
-this._stocks().set(etat.id, etat);                                    // muet
-this._stocks.update((m) => new Map(m).set(etat.id, etat));            // notifie
-```
-
-`update` reçoit l'ancienne valeur et **doit renvoyer une nouvelle référence**.
-`new Map(precedents)` recopie, `.set(...)` renvoie la Map — donc l'expression
-produit bien la nouvelle Map.
-
-**Test visé** : « produit une nouvelle référence à chaque mise à jour ». Il
-vérifie en plus que l'ancienne Map est intacte :
-
-```ts
-expect(store.stocks()).not.toBe(avant);
-expect(avant.get('p-001')?.quantite).toBe(12);   // l'ancienne n'a pas bougé
-```
-
-C'est plus fort que « ça se rafraîchit » : ça garantit qu'aucun code ne peut
-modifier l'état par un chemin détourné.
-
----
-
-## Étape B — La lecture réactive
-
-```ts
-quantite(id: string): number | null {
-  return this._stocks().get(id)?.quantite ?? null;
-}
-
-estDisponible(id: string): boolean | null {
-  return this._stocks().get(id)?.disponible ?? null;
-}
-```
-
-**Point qui surprend** : c'est une *méthode*, pas un signal — et c'est réactif
-quand même. Ce n'est pas la méthode qui est réactive, c'est la **lecture**
-`this._stocks()` qu'elle effectue. Appelée depuis un template ou un `computed`,
-elle crée la dépendance.
-
-**Contre-exemple utile à donner** : si `quantite()` renvoyait un *nouvel objet*
-à chaque appel, chaque cycle de détection verrait une référence différente, et
-le composant serait revérifié en permanence. Renvoyer une valeur primitive n'est
-pas un détail.
-
-`null` pour « pas encore interrogé » — distinct de `0`. On y revient à
-l'étape E.
-
----
-
-## Étape C — La surveillance périodique
-
-```ts
-surveiller(ids: readonly string[]): void {
-  this.arreter();                                            // 1
-  this._surveilles.set([...ids]);                            // 2
-  this.rafraichir();                                         // 3
-  this.minuterie = setInterval(() => this.rafraichir(), PERIODE_STOCK_MS);
-}
-
-rafraichir(): void {
-  for (const id of this._surveilles()) {
-    void this.interroger(id);
+  // Lecture réactive : la lecture de `_stocks()` crée la dépendance, même
+  // depuis une méthode appelée dans un template.
+  quantite(id: string): number | null {
+    return this._stocks().get(id)?.quantite ?? null;
   }
-}
-```
 
-Trois décisions dans `surveiller` :
-
-1. **`arreter()` d'abord** — sinon appeler `surveiller` deux fois laisse deux
-   minuteries tourner en parallèle. Test visé : « repart de zéro quand on change
-   la liste surveillée ».
-2. **Copier le tableau** (`[...ids]`) — même raison qu'à l'étape A : on ne
-   stocke pas une référence que l'appelant pourrait muter.
-3. **Interroger tout de suite** — sinon le premier affichage attend quinze
-   secondes. Test visé : « interroge immédiatement chaque produit surveillé ».
-
-```ts
-private async interroger(id: string): Promise<void> {
-  try {
-    this.enregistrer(await firstValueFrom(this.http.get<EtatStock>(`${this.base}/stocks/${id}`)));
-  } catch {
-    // volontairement ignoré : le badge garde sa dernière valeur connue
+  estDisponible(id: string): boolean | null {
+    return this._stocks().get(id)?.disponible ?? null;
   }
+
+  // La Map précédente n'est jamais modifiée : c'est la nouvelle référence qui
+  // notifie les signaux dépendants.
+  private enregistrer(etat: EtatStock): void {
+    this._stocks.update((precedents) => new Map(precedents).set(etat.id, etat));
+  }
+```
+
+**Ce qui passe au vert** — 5 tests écrits, plus le bonus « ignore une erreur
+réseau » qui passe seul : 6 de moins, 4 restants.
+
+**Le piège** — `this._stocks().set(etat.id, etat)` : la version 2 du compteur,
+transposée à la `Map`. « expose la quantité reçue » passe (la `Map` mutée
+contient bien la valeur) ; seul « produit une nouvelle référence » échoue. Dans
+le navigateur, les badges resteraient sur « vérification » jusqu'au prochain
+clic. Second piège : `?? null` oublié, et `quantite` renvoie `undefined` pour un
+produit jamais interrogé.
+
+## Étape 2 — Surveiller avec un effect
+
+**Fichier** `libs/catalogue/feature/src/lib/catalogue.page.ts`
+
+**Pourquoi celui-là** — Le store ne sait pas quels produits sont affichés, et
+ne doit pas le savoir : c'est la façade qui le sait, et seule la page connaît
+les deux. La page est la racine de composition de l'écran ; c'est elle qui relie
+la liste affichée à la surveillance.
+
+**Le test qui attend** `catalogue.page.spec.ts` › « surveille le stock des produits affichés, et suit leur changement »
+
+```ts
+import { ChangeDetectionStrategy, Component, effect, inject } from '@angular/core';
+import { CatalogueFacade, StockStore } from '@maison/catalogue/data-access';
+import { Piece, Produit } from '@maison/catalogue/domaine';
+import { BadgeStockComponent, CarteProduitComponent } from '@maison/catalogue/ui';
+
+// … dans le décorateur :
+  imports: [CarteProduitComponent, BadgeStockComponent],
+
+// … dans la grille du template, sous la carte :
+            <mc-badge-stock [quantite]="stocks.quantite(produit.id)" />
+
+// … dans la classe :
+  protected readonly stocks = inject(StockStore);
+
+  constructor() {
+    this.facade.rafraichir();
+
+    // Un effect légitime : il ne calcule rien, il synchronise un service
+    // extérieur (une minuterie) avec un état réactif.
+    effect(() => {
+      const ids = this.facade.produits().map((produit) => produit.id);
+      if (ids.length > 0) this.stocks.surveiller(ids);
+    });
+  }
+```
+
+**Ce qui passe au vert** — 2 tests de plus, 2 restants. « ne surveille rien tant
+qu aucun produit n est affiché » était vert dès l'ouverture ; il protège la
+garde `ids.length > 0`.
+
+**Le piège** — `[quantite]="stocks.quantite"` sans parenthèses : erreur de type
+au build, et la tentation de « corriger » en passant la méthode au badge. Il faut
+l'**appeler**, c'est l'appel qui lit le signal. La question « pourquoi pas un
+`computed` » : un `computed` calcule une valeur et n'agit sur rien ; Angular ne
+l'évalue que si quelqu'un le lit. Un `computed` qui appellerait `surveiller()`
+lancerait des requêtes au gré des lectures, et jamais si personne ne lit.
+
+## Étape 3 — Le nettoyage : la minuterie qui fuit
+
+**Fichier** `libs/catalogue/data-access/src/lib/stock.store.ts`
+
+**Pourquoi celui-là** — La minuterie est créée dans le store : c'est lui qui la
+libère. Ni la page ni un test ne devraient avoir à se souvenir d'appeler
+`arreter()`. Le store est `providedIn: 'root'`, son `DestroyRef` est celui de
+l'injecteur racine.
+
+**Le test qui attend** `stock.store.spec.ts` › « s arrête seul quand l injecteur est détruit »
+
+```ts
+import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
+
+// … dans la classe :
+
+  constructor() {
+    // Le nettoyage est déclaré au même endroit que la ressource qu'il libère.
+    inject(DestroyRef).onDestroy(() => this.arreter());
+  }
+
+  surveiller(ids: readonly string[]): void {
+    // Une seule minuterie à la fois : la liste précédente n'a plus d'intérêt.
+    this.arreter();
+    this._surveilles.set([...ids]);
+    this.rafraichir();
+    this.minuterie = setInterval(() => this.rafraichir(), PERIODE_STOCK_MS);
+  }
+
+  arreter(): void {
+    if (this.minuterie === null) return;
+    clearInterval(this.minuterie);
+    this.minuterie = null;
+  }
+```
+
+**Ce qui passe au vert** — 2 tests de plus, 0 restant.
+
+**Le piège** — Oublier `this.arreter()` en tête de `surveiller()` : aucun test
+ne le voit (« repart de zéro » ne compte que les requêtes immédiates), mais
+l'onglet Réseau, si. Après trois changements de filtre, trois rafales toutes les
+quinze secondes. C'est la démonstration de l'énoncé : la faire **avant**
+d'écrire le correctif. Second piège : `onCleanup` cité par la spec du TP. Il
+s'agit de la même idée côté `effect` (la fonction reçue par l'effet, appelée
+avant sa prochaine exécution) ; le store n'a pas d'effet, il utilise
+`DestroyRef`.
+
+## Bonus — Mesurer au Profiler
+
+**Fichier** aucun : Angular DevTools, onglet *Profiler*, sur `nx serve`.
+
+**Pourquoi celui-là** — Le zoneless se mesure : sans Zone.js, seul un signal
+modifié déclenche un cycle. Le Profiler le montre là où les tests ne peuvent pas.
+
+**Le test qui attend** aucun ; trente secondes d'inactivité enregistrées.
+
+```ts
+// Rien à écrire. La mutation à essayer, puis à retirer, dans StockStore :
+quantite(id: string): { valeur: number | null } {
+  return { valeur: this._stocks().get(id)?.quantite ?? null };
 }
 ```
 
-**Pourquoi `firstValueFrom` et pas `subscribe` ?** Parce que le test de
-structure du TP 3 interdit `.subscribe(` dans le code applicatif. La contrainte
-posée il y a une heure mord ici pour de vrai — c'est volontaire.
+**Ce qui passe au vert** — Rien. On relève le nombre de cycles déclenchés par
+les réponses de stock et les composants revérifiés, à comparer au TP 10 (chiffres
+non figés ici : ils dépendent de la machine). Avec la mutation ci-dessus, chaque
+badge reçoit un nouvel objet à chaque cycle.
 
-**Pourquoi avaler l'erreur ?** Test visé : « ignore une erreur réseau sans
-perdre la valeur connue ». Un badge qui repasse à « vérification » à chaque
-hoquet réseau est pire que pas de badge du tout.
+**Le piège** — Profiler un build de production sans DevTools activés, ou une
+page restée en arrière-plan : la minuterie tourne, mais le navigateur bride
+`setInterval` dans un onglet caché.
 
----
+## Bonus — `linkedSignal` sur la quantité
 
-## Étape D — Le nettoyage
+**Fichier** `libs/catalogue/ui/src/lib/quantite-choisie.bonus.spec.ts`
 
-```ts
-constructor() {
-  inject(DestroyRef).onDestroy(() => this.arreter());
-}
+**Pourquoi celui-là** — Le composant vit dans le fichier de test : le bonus
+n'ajoute pas de code au projet. Il montre le troisième outil, entre `computed`
+(dérivé, non modifiable) et `signal` + `effect` (modifiable, mais synchronisé à
+la main) : l'état local dérivé d'une source.
 
-arreter(): void {
-  if (this.minuterie === null) return;
-  clearInterval(this.minuterie);
-  this.minuterie = null;
-}
-```
-
-Une minuterie qui survit à son service, c'est une requête HTTP toutes les
-quinze secondes jusqu'à la fermeture de l'onglet.
-
-**Où l'écrire compte.** `DestroyRef.onDestroy` dans le constructeur place le
-nettoyage à trois lignes de la ressource qu'il libère. Un `ngOnDestroy` en bas
-de fichier, à quatre-vingts lignes de distance, est un nettoyage qu'on oubliera
-de mettre à jour le jour où on ajoute une seconde minuterie.
-
-**La limite, à signaler** : `StockStore` est `providedIn: 'root'`. Il n'est
-détruit qu'à la fermeture de l'application — pas en quittant la route. Les
-requêtes continuent donc si on navigue ailleurs. La solution (providers de
-route) est au TP 8.
-
----
-
-## Étape E — Le badge, et le quatrième état
+**Le test qui attend** `quantite-choisie.bonus.spec.ts` › « garde le choix de l utilisateur quand le stock change sans le contredire »
 
 ```ts
-protected readonly niveau = computed<NiveauStock>(() => {
-  const quantite = this.quantite();
-  if (quantite === null) return 'inconnu';
-  if (quantite === 0) return 'rupture';
-  return quantite < SEUIL_STOCK_TENDU ? 'tendu' : 'dispo';
+readonly choisie = linkedSignal<number | null, number>({
+  source: this.stock,
+  // On garde le choix de l'utilisateur tant que le stock le permet : c'est
+  // `precedent` qui fait la différence avec un `computed`.
+  computation: (stock, precedent) => Math.min(precedent?.value ?? 1, stock ?? 0),
 });
 ```
 
-L'ordre des conditions est le sujet. `null` **avant** `0`, sinon un
-`if (!quantite)` traiterait les deux ensemble.
+**Ce qui passe au vert** — Verts dès l'ouverture, rien à écrire. Remplacer
+`precedent?.value ?? 1` par `1` fait rougir 2 tests sur 4 (vérifié par
+mutation) : ceux où l'utilisateur a choisi 4.
 
-**Afficher « Rupture de stock » pendant le chargement est un bug qui coûte des
-ventes.** C'est extrêmement fréquent, et le premier test du badge le verrouille.
+**Le piège** — Écrire la forme courte `linkedSignal(() => Math.min(1, this.stock() ?? 0))` :
+elle ne voit pas la valeur précédente, et le choix est perdu au premier
+rafraîchissement du stock, toutes les quinze secondes.
 
-Le template suit le `computed`, jamais l'inverse :
+## Pour le formateur — katas si le groupe finit en avance
 
-```html
-<span class="badge" [class]="'badge--' + niveau()" role="status">
-  @switch (niveau()) {
-    @case ('inconnu') { Stock en cours de vérification }
-    @case ('rupture') { Rupture de stock }
-    @case ('tendu')   { Plus que {{ quantite() }} en stock }
-    @default          { En stock ({{ quantite() }}) }
-  }
-</span>
-```
+Sans test, à animer à l'oral :
 
----
-
-## Étape F — Le test qui résume le TP
-
-```ts
-it('se rafraîchit sans detectChanges quand l entrée change', async () => {
-  const fixture = await monter(12);
-  expect(texte(fixture)).toContain('En stock (12)');
-
-  fixture.componentRef.setInput('quantite', 0);
-  await fixture.whenStable();
-
-  expect(texte(fixture)).toContain('Rupture');
-});
-```
-
-Aucun `detectChanges()`. `setInput` modifie une entrée signal, ce qui marque la
-vue ; `whenStable()` attend que le rendu soit passé.
-
-C'est tout ce que demande le zoneless : **que le changement passe par un
-signal**. Si ce test échoue, ce n'est jamais un problème de test — c'est que
-quelque part, une valeur change sans qu'un signal le sache.
-
----
-
-## Le branchement dans la page
-
-```ts
-effect(() => {
-  const ids = this.facade.produits().map((produit) => produit.id);
-  if (ids.length > 0) this.stocks.surveiller(ids);
-});
-```
-
-**C'est un `effect` légitime**, et il y en a peu. Il ne calcule rien : il
-synchronise un système extérieur (une minuterie) avec un état réactif.
-
-Le critère à retenir : *un `effect` qui appelle `set()` sur un signal est
-presque toujours un `computed` déguisé.*
-
----
+1. Le `setInterval` tourne quand l'onglet est en arrière-plan. Suspendre la
+   surveillance sur `visibilitychange`. Où placer ce code pour qu'il reste
+   testable ?
+2. Remplacer le `setInterval` par `interval` + `switchMap`. Qu'est-ce que ça
+   simplifie ? Comment respecter le test de structure sur les `subscribe` ?
 
 ## Si un test résiste
 
-| Symptôme | Cause la plus probable |
+| Symptôme | Cause |
 | --- | --- |
-| La quantité reste `null` après le `flush` | la microtâche de `firstValueFrom` n'a pas été laissée passer (`await laisserPasserLesPromesses()`) |
-| « réinterroge à chaque période » ne voit qu'une requête | `vi.useFakeTimers()` appelé après `TestBed.inject` |
-| L'écran ne bouge pas, les tests passent | le branchement dans la page : `[quantite]="stocks.quantite(produit.id)"` doit **appeler** la méthode |
-| Deux séries de requêtes en parallèle | `arreter()` oublié en tête de `surveiller` |
-| Le badge dit « Rupture » au chargement | `null` traité avant `0` dans `niveau()` |
+| La quantité reste `null` après le `flush` | `enregistrer` mute la `Map` en place, ou lève encore (l'erreur est avalée par le `catch` d'`interroger`) |
+| « produit une nouvelle référence » échoue seul | `this._stocks().set(...)` au lieu de `update` avec une nouvelle `Map` |
+| `quantite` renvoie `undefined` | `?? null` oublié |
+| Les tests de la page échouent sur `surveiller` jamais appelé | l'`effect` est hors du constructeur (hors contexte d'injection), ou lit `produits` sans l'appeler |
+| Aucun badge dans la page | `BadgeStockComponent` absent des `imports` du composant |
+| Deux séries de requêtes en parallèle dans l'onglet Réseau | `arreter()` oublié en tête de `surveiller` |
+| « s arrête seul quand l injecteur est détruit » échoue, « arreter stoppe » passe | `DestroyRef` non déclaré dans le constructeur |
+| `test:structure` rouge | un `detectChanges()` ou un `NgZone` resté de la démonstration de l'étape 1 |
