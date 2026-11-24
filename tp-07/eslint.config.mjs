@@ -14,7 +14,11 @@ export default [
         'error',
         {
           enforceBuildableLibDependency: true,
-          allow: [],
+          // Exception ciblée (TP 5) : la racine enregistre les stratégies de
+          // livraison, dont PanierStore a besoin dans l'injecteur racine. `allow`
+          // exempte ce seul module (de partout), pas une couche : la règle `type:app`
+          // ci-dessous reste fermée aux data-access jusqu'au TP 8.
+          allow: ['@maison/livraison/data-access'],
           depConstraints: [
             // --- axe technique : qui a le droit d'appeler quelle couche -----
             { sourceTag: 'type:app', onlyDependOnLibsWithTags: ['type:feature', 'type:ui', 'type:util'] },

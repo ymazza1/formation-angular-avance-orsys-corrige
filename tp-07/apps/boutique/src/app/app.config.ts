@@ -3,6 +3,7 @@ import localeFr from '@angular/common/locales/fr';
 import { provideHttpClient } from '@angular/common/http';
 import { ApplicationConfig, LOCALE_ID, provideBrowserGlobalErrorListeners } from '@angular/core';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
+import { fournirStrategiesLivraison } from '@maison/livraison/data-access';
 import { routes } from './app.routes';
 
 registerLocaleData(localeFr);
@@ -17,5 +18,9 @@ export const appConfig: ApplicationConfig = {
     provideRouter(routes, withComponentInputBinding()),
     provideHttpClient(),
     { provide: LOCALE_ID, useValue: 'fr-FR' },
+    // Les stratégies de livraison sont fournies en `multi` : sans cette
+    // ligne, PanierStore ne peut pas s'instancier et le catalogue reste
+    // vide, sans autre signe qu'un NG0201 dans la console.
+    ...fournirStrategiesLivraison(),
   ],
 };
