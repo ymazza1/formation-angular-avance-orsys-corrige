@@ -254,6 +254,110 @@ rouge avec le nom du fichier fautif ; `npm run test:structure` est nécessaire,
 test du fichier refuse tout `Subject` public dans une façade. N'importe quel
 composant pourrait alors pousser des demandes en contournant les commandes.
 
+## Pour le formateur — « Réessayer » reste sans effet (défaut connu)
+
+Constaté en séance le 24 novembre 2026, et vérifié par un test.
+
+**Ce qu'on observe** — Au départ du TP (projet apprenant non modifié), une
+requête en échec affiche « Le catalogue est momentanément indisponible », puis
+plus rien ne part : ni « Réessayer », ni un nouveau mot. C'est attendu : le
+`catchError` extérieur termine le flux, l'étape 3 le corrige.
+
+Après l'étape 3 (et dans ce corrigé), un **nouveau mot** relance bien la
+recherche. En revanche **« Réessayer » ne fait toujours rien**, et retaper le
+même mot non plus.
+
+| Après une requête en échec | Départ apprenant | Ce corrigé | Corrigé + correctif ci-dessous |
+| --- | --- | --- | --- |
+| Nouvelle recherche, autre mot | rien ne part | fonctionne | fonctionne |
+| Bouton « Réessayer » | rien ne part | **rien ne part** | fonctionne |
+| Retaper exactement le même mot | rien ne part | rien ne part | rien ne part (voulu) |
+
+**Pourquoi** — `rafraichir()` pousse les filtres courants dans `demandes`, donc
+les mêmes que ceux de la requête qui a échoué. `distinctUntilChanged(memesFiltres)`
+les prend pour un doublon et les ignore. Le dédoublonnage ne fait pas la
+différence entre une saisie répétée et une relance volontaire.
+
+À poser au groupe : *pourquoi `distinctUntilChanged` bloque-t-il aussi une
+relance que l'utilisateur a demandée ?* Réponse : il ne voit que des valeurs,
+pas des intentions. Il faut deux sources.
+
+**Le correctif** (non appliqué au corrigé à ce jour, vérifié sur une copie :
+31 tests verts, lint et `test:structure` verts)
+
+`libs/catalogue/data-access/src/lib/catalogue.facade.ts` :
+
+1. Ajouter `merge` à l'import `rxjs`.
+2. Après `private readonly demandes = new Subject<Filtres>();` :
+
+   ```ts
+   /**
+    * Relances volontaires (premier chargement, bouton « Réessayer ») : elles ne
+    * passent PAS par `distinctUntilChanged`, sinon relancer les filtres d'une
+    * requête en échec serait ignoré comme un doublon.
+    */
+   private readonly relances = new Subject<Filtres>();
+   ```
+
+3. Le début du pipeline devient (la suite du `switchMap` ne change pas) :
+
+   ```ts
+   private readonly etat = toSignal(
+     merge(
+       this.demandes.pipe(
+         filter((f) => rechercheExploitable(f.recherche)),
+         debounceTime(DELAI_FRAPPE_MS),
+         distinctUntilChanged(memesFiltres),
+       ),
+       this.relances,
+     ).pipe(
+       switchMap((filtres) =>
+   ```
+
+4. `rafraichir()` pousse dans les relances :
+
+   ```ts
+   rafraichir(): void {
+     this.relances.next(this._filtres());
+   }
+   ```
+
+5. `reinitialiser()` et `modifier()` ne passent plus par `rafraichir()`, sinon
+   chaque saisie échapperait au debounce : remplacer leur `this.rafraichir();`
+   par
+
+   ```ts
+   this.demandes.next(this._filtres());
+   ```
+
+`libs/catalogue/data-access/src/lib/catalogue.facade.spec.ts`, après « survit à
+l erreur : la recherche suivante fonctionne » (il échoue sur ce corrigé, « found
+none », et passe avec le correctif) :
+
+```ts
+    it('relance la requête avec « Réessayer » après une erreur', () => {
+      facade.rafraichir();
+      laisserPasserLaFrappe();
+      for (let tentative = 0; tentative <= 2; tentative += 1) {
+        http.expectOne(() => true).flush('', { status: 503, statusText: 'indispo' });
+        vi.advanceTimersByTime(1000);
+      }
+      expect(facade.erreur()).not.toBeNull();
+
+      facade.rafraichir();
+      http.expectOne(() => true).flush(unePageDto([unDto()], 3));
+
+      expect(facade.erreur()).toBeNull();
+      expect(facade.total()).toBe(3);
+    });
+```
+
+« ignore une demande identique à la précédente » reste vert : il passe par
+`filtrerParPiece()`, donc par `demandes`. Effet de bord mineur : le premier
+chargement passant par les relances, taper une lettre puis l'effacer refait
+une fois la requête initiale. Le même défaut existe dans les corrigés 04 à 06,
+qui reprennent cette façade.
+
 ## Pour le formateur — katas si le groupe finit en avance
 
 Sans test, à animer à l'oral :
@@ -275,6 +379,7 @@ Sans test, à animer à l'oral :
 | « ne part pas pour une seule lettre » échoue | `filter` oublié, ou placé après le `switchMap` |
 | Les requêtes ne sont pas annulées | `mergeMap` resté en place, ou un `subscribe` dans le `switchMap` |
 | Seul « survit à l erreur » reste rouge | `catchError` à l'extérieur du `switchMap` |
+| Tests verts, mais « Réessayer » ne relance rien dans le navigateur après une erreur | défaut connu du corrigé : `distinctUntilChanged` ignore la relance (section « Réessayer reste sans effet ») |
 | « réessaie deux fois » trouve une requête de trop ou de moins | `count: TENTATIVES + 1`, ou `retry` placé après `catchError` |
 | L'état de chargement n'apparaît jamais | `startWith` placé dans le `pipe` externe |
 | `test:structure` rouge | un `.subscribe(` dans le code applicatif, ou `demandes` rendu public |
