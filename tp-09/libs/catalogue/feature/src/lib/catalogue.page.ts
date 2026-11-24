@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, effect, inject } from '@angular/core';
-import { RouterLink } from '@angular/router';
 import { CurrencyPipe } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { CatalogueFacade, StockStore } from '@maison/catalogue/data-access';
 import { Piece, Produit } from '@maison/catalogue/domaine';
 import { BadgeStockComponent, CarteProduitComponent } from '@maison/catalogue/ui';

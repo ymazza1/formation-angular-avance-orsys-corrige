@@ -98,7 +98,7 @@ import { schemaCommande } from './commande.schema';
         J'accepte les conditions générales de vente
       </label>
 
-      <button type="button" [disabled]="commande().invalid() || envoi()" (click)="valider()">
+      <button type="button" [disabled]="!commande().valid() || envoi()" (click)="valider()">
         @if (envoi()) {
           Envoi en cours…
         } @else {

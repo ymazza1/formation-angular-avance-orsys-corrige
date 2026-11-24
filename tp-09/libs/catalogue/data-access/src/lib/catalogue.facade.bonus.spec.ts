@@ -1,25 +1,31 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { API_URL } from '@maison/partage/util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CatalogueFacade } from './catalogue.facade';
-import { PageDto, ProduitDto } from './produit.dto';
+import { CatalogueFacade, DELAI_FRAPPE_MS } from './catalogue.facade';
 
-const DEBOUNCE = 300;
-
-function unePageDto(items: ProduitDto[], total = items.length): PageDto<ProduitDto> {
-  return { items, total, page: 1, taille: 12, facettes: { pieces: [], matieres: [] } };
-}
-
-describe('CatalogueFacade — bonus', () => {
+/**
+ * Bonus du TP 7 — ce qu'on garde, ce qu'on perd.
+ *
+ * Ces tests ne demandent rien à écrire : ils constatent le comportement de
+ * `httpResource`, pour que le bilan du TP repose sur des faits et non sur une
+ * impression. Ils passent dès que l'étape 1 est écrite.
+ */
+describe('CatalogueFacade — le bilan resource vs RxJS', () => {
   let http: HttpTestingController;
   let facade: CatalogueFacade;
 
   beforeEach(() => {
     vi.useFakeTimers();
     TestBed.configureTestingModule({
-      providers: [provideHttpClient(), provideHttpClientTesting(), { provide: API_URL, useValue: '/api' }],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: API_URL, useValue: '/api' },
+      ],
     });
     http = TestBed.inject(HttpTestingController);
     facade = TestBed.inject(CatalogueFacade);
@@ -29,34 +35,38 @@ describe('CatalogueFacade — bonus', () => {
     vi.useRealTimers();
   });
 
-  function laisserPasserLaFrappe(): void {
-    vi.advanceTimersByTime(DEBOUNCE);
+  async function laisserTravaillerLaRessource(): Promise<void> {
+    TestBed.tick();
+    await Promise.resolve();
+    await Promise.resolve();
+    TestBed.tick();
   }
 
-  describe('filtres', () => {
-    it('un changement de sélection ramène en page 1', () => {
-      facade.allerALaPage(3);
-      laisserPasserLaFrappe();
-      http.expectOne((r) => r.params.get('page') === '3').flush(unePageDto([]));
+  /** Ce qu'on garde : la requête devenue inutile est annulée, pas seulement ignorée. */
+  it('annule la requête en cours quand les filtres changent', async () => {
+    TestBed.tick();
+    const premiere = http.expectOne((r) => r.url === '/api/produits');
 
-      facade.rechercher('table');
-      laisserPasserLaFrappe();
+    facade.filtrerParPiece('chambre');
+    vi.advanceTimersByTime(DELAI_FRAPPE_MS);
+    TestBed.tick();
 
-      expect(facade.filtres().page).toBe(1);
-      http.expectOne((r) => r.params.get('page') === '1').flush(unePageDto([]));
-    });
-
-    it('reinitialiser repart des filtres vides', () => {
-      facade.filtrerParMatiere('chene');
-      laisserPasserLaFrappe();
-      http.expectOne(() => true).flush(unePageDto([]));
-
-      facade.reinitialiser();
-      laisserPasserLaFrappe();
-
-      expect(facade.filtres().matiere).toBeNull();
-      http.expectOne((r) => !r.params.has('matiere')).flush(unePageDto([]));
-    });
+    expect(premiere.cancelled).toBe(true);
+    http.expectOne((r) => r.params.get('piece') === 'chambre');
   });
 
+  /**
+   * Ce qu'on perd : la version RxJS du TP 3 refaisait deux tentatives avant
+   * d'abandonner. La ressource abandonne à la première erreur.
+   */
+  it('ne réessaie pas une requête en échec', async () => {
+    TestBed.tick();
+    http.expectOne(() => true).flush('', { status: 503, statusText: 'indispo' });
+    await laisserTravaillerLaRessource();
+    vi.advanceTimersByTime(5_000);
+    TestBed.tick();
+
+    http.expectNone(() => true);
+    expect(facade.erreur()).toBe('catalogue_indisponible');
+  });
 });

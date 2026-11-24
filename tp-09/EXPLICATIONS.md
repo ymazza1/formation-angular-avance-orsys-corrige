@@ -1,12 +1,14 @@
 # TP 9 — Corrigé et notes d'animation
 
-**Durée cible** 50 min · **Rouge → vert** 11 tests, puis 1 mutant à tuer
+**Durée cible** 40 min · **Rouge → vert** 8 tests (sur 11), puis 1 mutant à tuer
 
 ## Ce qui a été ajouté
 
 | Élément | Contenu |
 | --- | --- |
-| `commande/data-access` (**nouvelle lib**) | `CommandeStore` — envoi, 409, 401, état d'envoi |
+| `commande/data-access` (**nouvelle lib**) | `CommandeStore` — envoi, 409, 401, état d'envoi. Côté apprenant, le chemin du succès est fourni : 3 tests verts, 8 à écrire |
+| `commande/feature` | `CommandePage` branchée sur le store (fournie) ; confirmation **avant** le test du panier vide (défauts 2 et 4) ; bouton sur `!valid()` |
+| `apps/boutique` | route `connexion` rétablie (défaut 9, perdu entre le TP 8 et le TP 9) |
 | `tools/mutants/chasse.mjs` | chasse aux mutants, une page, sans dépendance |
 | `livraison/domaine` | **deux tests ajoutés** : le seuil de franco exact |
 | `package.json` | script `mutants` |
@@ -86,11 +88,13 @@ peuvent commander le dernier exemplaire à la même seconde.
 
 | Temps | Étape |
 | --- | --- |
-| 0-8 | Étape 1 : **lire les tests** et répondre aux quatre questions |
-| 8-22 | Étape 2 : écrire le store |
-| 22-38 | Étape 3 : **la chasse aux mutants**, le cœur du TP |
-| 38-45 | Étape 4 : la discussion sur ce qui se teste bien |
-| 45-50 | Étape 5 : les temps d'exécution |
+| 0-3 | Démonstration : connecté, une commande part mais le panier reste plein ; déconnecté, erreur non interceptée dans la console |
+| 3-10 | Étape 1 : **lire les tests** et répondre aux quatre questions |
+| 10-22 | Étape 2 : écrire le store (8 tests) |
+| 22-40 | Étape 3 : **la chasse aux mutants**, le cœur du TP |
+
+Les deux bonus (ce qui se teste bien ou mal, le temps d'exécution) se font à
+l'oral si le temps le permet.
 
 L'étape 3 ne se sacrifie jamais. Si vous êtes en retard, donnez le store écrit
 et allez directement aux mutants.

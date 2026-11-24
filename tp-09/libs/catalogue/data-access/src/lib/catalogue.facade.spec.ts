@@ -110,12 +110,19 @@ describe('CatalogueFacade — signal-first', () => {
       http.expectOne((r) => r.params.get('piece') === 'chambre');
     });
 
+    /**
+     * Une frappe réelle laisse passer un rendu entre deux touches : sans le
+     * `TestBed.tick()` intermédiaire, la ressource ne lirait que la dernière
+     * valeur et le test passerait même sans debounce.
+     */
     it('ne part qu une fois pour une frappe rapide', async () => {
       await premierChargement();
 
-      facade.rechercher('ca');
-      facade.rechercher('can');
-      facade.rechercher('canapé');
+      for (const saisie of ['ca', 'can', 'canapé']) {
+        facade.rechercher(saisie);
+        TestBed.tick();
+        vi.advanceTimersByTime(100);
+      }
       vi.advanceTimersByTime(DELAI_FRAPPE_MS);
       TestBed.tick();
 
