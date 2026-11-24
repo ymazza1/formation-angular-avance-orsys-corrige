@@ -80,7 +80,7 @@ réseau — et on récolte un 401 parfaitement évitable. C'est le genre de dét
 qui distingue un code qui marche en démonstration d'un code qui marche en
 production.
 
-### La deuxième dérogation aux frontières
+### La troisième dérogation aux frontières
 
 `apps/boutique` doit importer `auth/data-access` pour câbler le guard et
 l'intercepteur. La règle l'interdisait.
@@ -94,7 +94,8 @@ se défendent :
 - *pour la dérogation* : la racine de composition câble les providers, ceux-ci
   vivent en data-access, la dépendance est réelle — la masquer derrière une lib
   supplémentaire est du rangement, pas de l'architecture ;
-- *contre* : c'est la deuxième dérogation en quatre TP, et c'est exactement
+- *contre* : c'est la troisième dérogation en quatre TP (elle absorbe l'exception
+  ciblée `allow` du TP 5), et c'est exactement
   comme ça qu'une matrice finit permissive.
 
 La question à poser : **« à partir de combien de dérogations la règle ne
