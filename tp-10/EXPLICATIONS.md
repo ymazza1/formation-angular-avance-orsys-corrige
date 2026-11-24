@@ -11,6 +11,7 @@
 | `apps/boutique/project.json` | budgets resserrés : 320 / 350 ko |
 | `tools/perf/perf.spec.ts` | **nouveau** — 8 garde-fous |
 | `package.json` | script `test:perf` |
+| reports (24 nov.) | route `connexion` (défaut 9), bouton du tunnel sur `!valid()`, test « frappe rapide » durci, bonus hérités exécutés : sans lien avec l'audit, à ne pas présenter |
 
 ## Le défaut corrigé est réel, et il date du TP 4
 
@@ -43,8 +44,8 @@ Mesures réelles, vérifiées :
 
 | | Initial total |
 | --- | --- |
-| Avant corrections | 302,6 ko |
-| Après corrections | **308,1 ko** |
+| Avant corrections | 302,7 ko |
+| Après corrections | **308,2 ko** |
 
 `NgOptimizedImage` ajoute 5,5 ko — c'est une directive avec sa logique de
 `srcset` et de chargement paresseux.
@@ -123,7 +124,7 @@ conséquence pour l'exercice. Signalez-le avant qu'on vous le demande.
 C'est possible si leur bundle a dérivé pendant les TP précédents. Faire relever
 la valeur réelle et poser le budget dessus, plutôt que de recopier la mienne.
 
-**Un stagiaire veut optimiser le tunnel de commande (66 ko).**
+**Un stagiaire veut optimiser le tunnel de commande (68 ko).**
 Bonne intuition, mauvaise cible : ce poids est déjà payé en lazy loading, donc
 seulement par ceux qui commandent. Le budget `initial` ne le compte pas.
 Bonne occasion d'expliquer la différence entre poids initial et poids total.

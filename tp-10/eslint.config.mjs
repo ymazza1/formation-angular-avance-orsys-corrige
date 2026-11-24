@@ -14,12 +14,16 @@ export default [
         'error',
         {
           enforceBuildableLibDependency: true,
+          // L'exception ciblée du TP 5 (`allow: ['@maison/livraison/data-access']`)
+          // n'a plus d'objet : la règle `type:app` ci-dessous ouvre désormais toute
+          // la couche data-access à la racine. Une exception étroite est devenue large.
           allow: [],
           depConstraints: [
             // --- axe technique : qui a le droit d'appeler quelle couche -----
             // La racine de composition fait exception : c'est elle qui câble les
             // providers (intercepteurs, guards), et ceux-ci vivent en data-access.
-            // Deuxième dérogation de la formation — à compter, pas à banaliser.
+            // Troisième dérogation de la formation (après catalogue → panier et
+          // l'exception ciblée du TP 5, qu'elle absorbe) — à compter, pas à banaliser.
             { sourceTag: 'type:app', onlyDependOnLibsWithTags: ['type:feature', 'type:ui', 'type:data-access', 'type:util'] },
             { sourceTag: 'type:feature', onlyDependOnLibsWithTags: ['type:feature', 'type:ui', 'type:data-access', 'type:domaine', 'type:util'] },
             { sourceTag: 'type:ui', onlyDependOnLibsWithTags: ['type:ui', 'type:domaine', 'type:util'] },
