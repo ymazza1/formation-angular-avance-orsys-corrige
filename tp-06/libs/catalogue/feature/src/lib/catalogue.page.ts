@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, effect, inject } from '@angular/core';
 import { CurrencyPipe } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { CatalogueFacade, StockStore } from '@maison/catalogue/data-access';
 import { Piece, Produit } from '@maison/catalogue/domaine';
 import { BadgeStockComponent, CarteProduitComponent } from '@maison/catalogue/ui';
@@ -15,7 +16,13 @@ const PIECES: readonly Piece[] = ['salon', 'salle-a-manger', 'chambre', 'bureau'
  */
 @Component({
   selector: 'mc-catalogue-page',
-  imports: [CarteProduitComponent, BadgeStockComponent, LignePanierComponent, CurrencyPipe],
+  imports: [
+    CarteProduitComponent,
+    BadgeStockComponent,
+    LignePanierComponent,
+    CurrencyPipe,
+    RouterLink,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <aside class="panier" aria-label="Panier">
@@ -42,6 +49,7 @@ const PIECES: readonly Piece[] = ['salon', 'salle-a-manger', 'chambre', 'bureau'
           <dd>{{ panier.total() | currency: 'EUR' }}</dd>
         </dl>
 
+        <a class="commander" routerLink="/commande">Commander</a>
         <button type="button" (click)="panier.vider()">Vider le panier</button>
       }
     </aside>

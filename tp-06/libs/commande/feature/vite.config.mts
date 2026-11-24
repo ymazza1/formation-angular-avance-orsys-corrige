@@ -11,7 +11,5 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.spec.ts'],
     setupFiles: ['../../../tools/test-setup.ts'],
-    // Retirer cette ligne pour activer les tests bonus (voir l'énoncé du TP).
-    exclude: ['**/*.bonus.spec.ts'],
   },
 });

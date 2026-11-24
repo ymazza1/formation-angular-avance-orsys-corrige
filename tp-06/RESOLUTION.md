@@ -1,75 +1,30 @@
 # TP 6 — Résolution pas à pas
 
-Fichiers concernés :
-`libs/commande/domaine/src/lib/commande.ts`
-`libs/commande/feature/src/lib/commande.schema.ts`
-`libs/commande/feature/src/lib/commande.page.ts`
+On travaille sur `apprenant/tp-06`, un terminal sur `npx nx run-many -t test --watch`.
+Le compteur de départ est à 13 rouges, tous dans `commande-feature`, dont 11 à
+écrire. Les 2 autres sont les tests du bonus « les erreurs comme objets », qui
+passent seuls à l'étape 2.
 
----
+Avant d'écrire : ajouter un article, cliquer sur **Commander**. La page s'affiche,
+et « Valider la commande » est actif sur un formulaire vide. C'est le point de
+départ à montrer.
 
-## Étape A — Les seuils du point relais
+## Étape 1 — Le schéma de validation (7 tests)
 
-```ts
-export const POIDS_MAX_POINT_RELAIS_KG = 30;
-export const VOLUME_MAX_POINT_RELAIS_M3 = 0.5;
+**Fichier** `libs/commande/feature/src/lib/commande.schema.ts`
 
-export function accepteEnPointRelais(ligne: LignePanier): boolean {
-  return ligne.poidsKg <= POIDS_MAX_POINT_RELAIS_KG && ligne.volumeM3 <= VOLUME_MAX_POINT_RELAIS_M3;
-}
-```
+**Pourquoi celui-là** — Le schéma est une fonction de configuration, hors du
+composant : il se teste avec `form()` dans un contexte d'injection, sans DOM ni
+clic. Il ne porte que les règles de **saisie**. Les règles de livraison (point
+relais, modes) restent dans le domaine, parce qu'elles valent aussi pour une
+commande qui n'est pas passée par ce formulaire.
 
-`<=`, pas `<` : un colis de 30 kg pile passe. Un test le vérifie
-explicitement, comme au TP 2 pour `estVolumineux`.
-
-Les seuils sont des constantes exportées, pas des littéraux enfouis. Le jour où
-le transporteur change sa grille, on modifie deux lignes et les tests disent
-immédiatement ce qui bouge.
-
----
-
-## Étape B — La règle du panier entier
+**Le test qui attend** `commande.schema.spec.ts` › « exige l acceptation des CGV »
 
 ```ts
-export function modesDisponibles(panier: Panier): readonly ModeLivraison[] {
-  if (panier.length === 0) return [];
-  const tousAcceptes = panier.every(accepteEnPointRelais);
-  return tousAcceptes ? ['domicile', 'point-relais', 'express'] : ['domicile', 'express'];
-}
-```
+import { email, pattern, required, schema, validate } from '@angular/forms/signals';
+import { Commande, FORMAT_CODE_POSTAL } from '@maison/commande/domaine';
 
-**`every`, pas `some`.** Une seule ligne encombrante suffit à disqualifier le
-point relais pour toute la commande — on ne va pas couper la livraison en deux.
-
-Le cas du panier vide renvoie une liste vide plutôt que les trois modes : il
-n'y a rien à livrer, proposer un mode n'aurait pas de sens. C'est le genre de
-cas limite qu'on n'écrit que parce qu'un test l'exige.
-
----
-
-## Étape C — Corriger plutôt que recalculer
-
-```ts
-export function modeCorrige(panier: Panier, mode: ModeLivraison): ModeLivraison {
-  return modeEstDisponible(panier, mode) ? mode : 'domicile';
-}
-```
-
-Trois lignes, mais c'est la fonction la plus intéressante du domaine.
-
-Scénario : l'utilisateur choisit « point relais », puis retourne au catalogue et
-ajoute un canapé. Sans cette fonction, on enregistre une commande impossible à
-livrer — et le problème n'apparaît qu'à la préparation, en entrepôt.
-
-**Pourquoi ne pas simplement recalculer le mode ?** Parce que c'est une donnée
-**saisie**. Si on la recalculait, on écraserait le choix de l'utilisateur à
-chaque modification du panier. On ne la corrige que quand elle devient
-impossible — et on retombe sur le mode le plus universel.
-
----
-
-## Étape D — Le schéma, et pourquoi il vit à part
-
-```ts
 export function schemaCommande(base: string) {
   return schema<Commande>((c) => {
     required(c.email, { message: 'Renseignez votre email' });
@@ -78,165 +33,199 @@ export function schemaCommande(base: string) {
     required(c.adresse, { message: 'Renseignez votre adresse' });
     pattern(c.codePostal, FORMAT_CODE_POSTAL, { message: 'Cinq chiffres attendus' });
     required(c.ville, { message: 'Renseignez votre ville' });
-    // …
+
+    // `required` ne refuse pas `false` : un booléen n'est jamais « vide ».
+    validate(c.accepteCgv, ({ value }) =>
+      value() ? undefined : { kind: 'cgv', message: 'Vous devez accepter les CGV' },
+    );
   });
 }
 ```
 
-Une fonction, un paramètre, aucune injection. Le schéma ne connaît ni le
-composant, ni le `PanierStore`, ni `HttpClient`.
+**Ce qui passe au vert** — 7 tests, 6 restants.
 
-**Le bénéfice se lit dans le spec** :
+**Le piège** — `required(c.accepteCgv, …)` pour les CGV : le test reste rouge,
+`false` est une valeur. Second piège : recopier `/^[0-9]{5}$/` au lieu d'importer
+`FORMAT_CODE_POSTAL` du domaine. Les tests passent, et la règle existe deux fois.
+
+## Étape 2 — La validation asynchrone et l'état à trois valeurs (1 test)
+
+**Fichier** `libs/commande/feature/src/lib/commande.schema.ts`
+
+**Pourquoi celui-là** — La zone de livraison n'est connue que du serveur. La
+vérifier dans le schéma, et non dans le composant, la place à côté des autres
+règles : le formulaire ne fait aucune différence entre une erreur synchrone et
+une erreur venue du réseau. `validateHttp` repose sur `httpResource` (TP 7) :
+relance à chaque changement de valeur, annulation de la requête précédente.
+
+**Le test qui attend** `commande.schema.spec.ts` › « reste en attente tant que la zone de livraison n est pas vérifiée »
 
 ```ts
-function unFormulaire(valeurs: Partial<Commande> = {}) {
-  const modele = signal<Commande>({ ...COMMANDE_VIDE, ...valeurs });
-  const injecteur = TestBed.inject(Injector);
-  return runInInjectionContext(injecteur, () => form(modele, schemaCommande('/api')));
+import { email, pattern, required, schema, validate, validateHttp } from '@angular/forms/signals';
+import { Commande, FORMAT_CODE_POSTAL } from '@maison/commande/domaine';
+
+interface ReponseCodePostal {
+  valide: boolean;
+  ville?: string;
+}
+
+export function schemaCommande(base: string) {
+  return schema<Commande>((c) => {
+    required(c.email, { message: 'Renseignez votre email' });
+    email(c.email, { message: 'Cet email ne semble pas valide' });
+    required(c.nom, { message: 'Renseignez votre nom' });
+    required(c.adresse, { message: 'Renseignez votre adresse' });
+    pattern(c.codePostal, FORMAT_CODE_POSTAL, { message: 'Cinq chiffres attendus' });
+    required(c.ville, { message: 'Renseignez votre ville' });
+
+    // `required` ne refuse pas `false` : un booléen n'est jamais « vide ».
+    validate(c.accepteCgv, ({ value }) =>
+      value() ? undefined : { kind: 'cgv', message: 'Vous devez accepter les CGV' },
+    );
+
+    validateHttp(c.codePostal, {
+      // Pas de requête tant que le format est faux : le serveur n'a rien à dire de « 4 ».
+      request: ({ value }) =>
+        FORMAT_CODE_POSTAL.test(value()) ? `${base}/validation/code-postal/${value()}` : undefined,
+      onSuccess: (reponse: ReponseCodePostal) =>
+        reponse.valide
+          ? undefined
+          : { kind: 'zone', message: 'Nous ne livrons pas encore dans cette zone' },
+      // Décision commerciale : une panne du service de vérification ne bloque pas la vente.
+      onError: () => undefined,
+    });
+  });
 }
 ```
 
-Pas de `createComponent`, pas de `fixture`, pas de `click()`. Onze tests de
-validation en 130 ms.
+**Ce qui passe au vert** — 1 test écrit, plus les 2 du bonus « erreurs comme
+objets » qui passent seuls : 3 restants (tous dans la page).
 
-`runInInjectionContext` est nécessaire parce que `form()` crée des signaux et
-des ressources — c'est la seule concession au framework.
+**Le piège** — Le test attend `valid()` **et** `invalid()` à `false`. Le
+dire avant d'écrire : un formulaire en attente n'est ni l'un ni l'autre. C'est
+ce qui décide de la garde du bouton à l'étape 3. Second piège : `request` qui
+renvoie l'URL sans tester le format, et une requête part à chaque chiffre tapé.
 
----
+## Étape 3 — Le formulaire (3 tests)
 
-## Étape E — Les CGV, ou pourquoi `required` ne suffit pas
+**Fichier** `libs/commande/feature/src/lib/commande.page.ts`
 
-```ts
-validate(c.accepteCgv, ({ value }) =>
-  value() ? undefined : { kind: 'cgv', message: 'Vous devez accepter les CGV' },
-);
-```
+**Pourquoi celui-là** — Le composant ne valide rien : il lie chaque champ au
+formulaire par `[formField]` et lit l'état exposé en signaux. Le code postal,
+fourni, montre la forme ; il reste le champ email et la garde du bouton.
 
-`required(c.accepteCgv)` ne ferait rien d'utile : `false` n'est pas « vide ».
-« Requis » signifie **non nul**, pas **vrai**.
+**Le test qui attend** `commande.page.spec.ts` › « garde le bouton désactivé tant que la zone de livraison est en vérification »
 
-Notez la forme de l'erreur : un simple objet `{ kind, message }`. Pas de
-fabrique à importer, pas de classe à étendre. `kind` sert au code (pour
-distinguer les erreurs), `message` à l'utilisateur.
-
----
-
-## Étape F — La validation asynchrone
-
-```ts
-validateHttp(c.codePostal, {
-  request: ({ value }) =>
-    FORMAT_CODE_POSTAL.test(value()) ? `${base}/validation/code-postal/${value()}` : undefined,
-  onSuccess: (reponse: ReponseCodePostal) =>
-    reponse.valide ? undefined : { kind: 'zone', message: 'Nous ne livrons pas encore dans cette zone' },
-  onError: () => undefined,
-});
-```
-
-**`request` renvoie `undefined`** tant que le format est mauvais : la requête
-n'est pas envoyée. Même réflexe qu'au TP 3 avec `rechercheExploitable` — on ne
-fait pas travailler le serveur pour rien.
-
-**`onSuccess` renvoie `undefined`** quand tout va bien. En validation, « pas
-d'erreur » se dit `undefined`.
-
-**`onError` renvoie `undefined`** : service en panne, on laisse passer. C'est un
-arbitrage commercial — bloquer toutes les commandes parce qu'un service
-auxiliaire est indisponible coûte plus cher que livrer trois colis dans une
-zone mal desservie. À faire trancher par le métier, pas par le développeur.
-
-Sous le capot, `validateHttp` construit un `httpResource` : la requête est
-relancée quand la valeur change, et la précédente est annulée. C'est
-exactement le mécanisme du TP 7, rencontré ici sans le savoir.
-
-### Le test qui surprend
-
-```ts
-expect(champs.codePostal().pending()).toBe(true);
-expect(champs().valid()).toBe(false);
-expect(champs().invalid()).toBe(false);
-```
-
-Un formulaire complet dont une validation asynchrone est en cours n'est **ni
-valide ni invalide**. Trois états.
-
-C'est ce qui permet de désactiver le bouton **sans** afficher d'erreur :
-l'utilisateur n'a rien fait de mal, on attend. Avec deux états, il aurait fallu
-choisir entre laisser cliquer trop tôt et afficher un message injustifié.
-
-*J'ai trouvé ce comportement en écrivant le test : j'attendais `valid()` à
-`true`. C'est devenu le test le plus intéressant du TP.*
-
----
-
-## Étape G — Les trois niveaux de lecture
+À la place du premier `TODO` :
 
 ```html
-<input type="email" [formField]="commande.email" />
-
-@if (commande.email().touched()) {
-  @for (erreur of commande.email().errors(); track $index) {
-    <p role="alert">{{ erreur.message }}</p>
-  }
-}
-
-<button [disabled]="commande().invalid()" (click)="valider()">Valider</button>
+      <label>
+        Email
+        <input type="email" [formField]="commande.email" />
+      </label>
+      @if (commande.email().touched()) {
+        @for (erreur of commande.email().errors(); track $index) {
+          <p role="alert">{{ erreur.message }}</p>
+        }
+      }
 ```
 
-| Écriture | Ce que c'est |
-| --- | --- |
-| `commande.email` | le **champ** — c'est lui qu'on passe à `[formField]` |
-| `commande.email()` | son **état** : `value`, `errors`, `touched`, `pending`… |
-| `commande()` | l'état du **formulaire entier** |
+Et le bouton, à la place du second :
 
-La confusion entre les deux premiers est l'erreur numéro un des premières
-heures. Retenir : sans parenthèses, c'est la structure ; avec, c'est l'état.
+```html
+      <button type="button" [disabled]="!commande().valid() || envoi()" (click)="valider()">
+```
 
-Le garde `@if (touched())` n'est pas cosmétique : un formulaire qui affiche six
-messages d'erreur avant la première frappe fait fuir.
+**Ce qui passe au vert** — 3 tests, 0 restant.
 
----
+**Le piège** — `[disabled]="commande().invalid()"` : deux tests sur trois passent,
+et le bouton s'active pendant « Vérification de la zone de livraison… ». C'est
+grave, parce que `submit()` lance l'action dès que le formulaire n'est **pas
+invalide** (`ignoreValidators` vaut `'pending'` par défaut, vérifié dans le code
+d'Angular) : la commande part sans zone vérifiée. Le corrigé de novembre avait
+cette erreur. Second piège : l'erreur affichée sans `touched()`, le formulaire
+crie dès l'ouverture (test « n affiche l erreur de l email qu une fois le champ
+quitté »).
 
-## Étape H — L'effet de correction
+## Bonus — Corriger un mode devenu impossible
+
+**Fichier** `libs/commande/feature/src/lib/commande.page.ts` (fourni) et `commande.page.bonus.spec.ts`
+
+**Pourquoi celui-là** — Le mode est une donnée **saisie** : il ne se recalcule
+pas, il se corrige quand le panier change sous lui. Un `computed` ne peut pas le
+faire, d'où cet `effect`, qui écrit dans un signal. C'est l'exception à la règle
+du TP 5 (« un `effect` qui appelle `set()` est un `computed` déguisé »), et elle
+se justifie.
+
+**Le test qui attend** `commande.page.bonus.spec.ts` › « ramène au domicile un point relais devenu impossible »
 
 ```ts
-constructor() {
-  effect(() => {
-    const lignes = this.panier.lignes();
-    this.modele.update((commande) => ({
-      ...commande,
-      mode: modeCorrige(lignes, commande.mode),
-    }));
-  });
+  constructor() {
+    // Il ne dérive rien : il répare une saisie que le panier a rendue impossible.
+    effect(() => {
+      const lignes = this.panier.lignes();
+      this.modele.update((commande) => ({
+        ...commande,
+        mode: modeCorrige(lignes, commande.mode),
+      }));
+    });
+  }
+```
+
+**Ce qui passe au vert** — Rien à écrire : 2 tests verts dès l'ouverture. Retirer
+l'appel à `modeCorrige` fait rougir le premier (vérifié par mutation).
+
+**Le piège** — Les tests lisent `page['modele']` : l'accès entre crochets passe
+outre `protected`. C'est toléré dans un test, à ne pas imiter ailleurs.
+
+## Bonus — Les erreurs comme objets `{ kind, message }`
+
+**Fichier** `libs/commande/feature/src/lib/commande.schema.bonus.spec.ts`
+
+**Pourquoi celui-là** — Le `kind` dit d'où vient l'erreur, le `message` ce
+qu'on affiche. Le test répond lui-même à la requête de vérification avec
+`HttpTestingController` : c'est la seule façon de tester `onSuccess` et
+`onError` sans serveur.
+
+**Le test qui attend** `commande.schema.bonus.spec.ts` › « ne bloque pas la commande quand la vérification est en panne »
+
+```ts
+async function repondre(reponse: (requete: ReturnType<HttpTestingController['expectOne']>) => void) {
+  // La requête ne part qu'au premier passage de la détection : `tick` d'abord.
+  TestBed.tick();
+  reponse(TestBed.inject(HttpTestingController).expectOne('/api/validation/code-postal/12345'));
+  await TestBed.inject(ApplicationRef).whenStable();
 }
 ```
 
-C'est le **troisième effet légitime** de la formation, et il n'est pas de la
-même famille que les deux précédents.
+**Ce qui passe au vert** — Rien à écrire : les 2 tests passent à l'étape 2. Un
+`onError` qui renvoie une erreur fait rougir « ne bloque pas la commande quand
+la vérification est en panne » (vérifié par mutation).
 
-| TP | Effet | Nature |
-| --- | --- | --- |
-| 4 | surveillance du stock | synchronise un système extérieur (minuterie) |
-| 5 | persistance du panier | synchronise un système extérieur (stockage) |
-| 6 | correction du mode | **répare un état saisi** |
+**Le piège** — `expectOne` sans `TestBed.tick()` avant : « Expected one matching
+request, found none ». La ressource ne lance sa requête qu'à la détection.
 
-Et celui-ci **écrit dans un signal**, ce qu'on a présenté comme suspect depuis
-le jour 2. La nuance à assumer devant le groupe : la règle n'est pas « un effet
-n'écrit jamais », c'est **« un effet ne calcule jamais »**.
+## Pour le formateur — katas si le groupe finit en avance
 
-Si quelqu'un propose un `computed`, faites-lui écrire le code : le choix de
-l'utilisateur sera écrasé à chaque modification du panier.
+Sans test, à animer à l'oral :
 
----
+1. Réponse à la question de fin n° 1 : `submit()` ne refuse qu'un formulaire
+   **invalide**. Passer `{ action, ignoreValidators: 'none' }` exige `valid()`.
+   Faut-il le faire en plus de la garde du bouton ?
+2. Rendre la ville obligatoire seulement pour une livraison à domicile
+   (`applyWhen`).
+3. Le même formulaire en `FormGroup` typé : où vit la validation, et comment la
+   tester sans monter le composant ?
 
 ## Si un test résiste
 
-| Symptôme | Cause la plus probable |
+| Symptôme | Cause |
 | --- | --- |
-| `form() must be called in an injection context` | manque `runInInjectionContext` dans le test |
-| La validation asynchrone n'aboutit jamais | `provideHttpClientTesting()` absent des providers |
-| `valid()` est faux sur un formulaire correct | la validation asynchrone est `pending` — vérifiez `invalid()` |
-| Les CGV ne bloquent rien | `required` sur un booléen ; il faut `validate` |
-| « Mon champ n'est pas lié » | `FormField` absent des `imports` du composant |
-| Les erreurs s'affichent d'emblée | garde `@if (champ().touched())` manquant |
-| Le mode reste sur « point relais » | l'effet de correction n'est pas dans le constructeur |
+| « exige l acceptation des CGV » échoue | `required` au lieu de `validate` sur un booléen |
+| Un message attendu n'est pas trouvé | message recopié avec une faute : comparer au spec, mot pour mot |
+| « reste en attente » échoue, `pending()` à `false` | `validateHttp` absent, ou `request` renvoie `undefined` pour `44840` |
+| « écrit la saisie de l email dans le modèle » échoue, champ introuvable | `type="email"` oublié sur l'`input` |
+| « garde le bouton désactivé… » échoue au premier `expect` | bouton gardé sur `invalid()` au lieu de `!valid()` |
+| « n affiche l erreur… » échoue au premier `expect` | erreurs affichées sans `touched()` |
+| Les bonus « erreurs comme objets » restent rouges après l'étape 2 | `onSuccess` ne renvoie pas `kind: 'zone'`, ou `onError` renvoie une erreur |
+| Tests verts, mais pas de lien « Commander » ni de catalogue dans le navigateur | `app.config.ts` ou `catalogue.page.ts` modifiés : ils sont fournis (défaut 1, défaut 10) |
